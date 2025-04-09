@@ -62,14 +62,17 @@ async function run() {
     <ul>
       <li><a href="/orders">Go to Orders</a></li>
       <li><a href="/lessons">Go to lessons</a></li>
+      <li><a href="/search?q=a">Test Search (e.g., 'a')</a></li>
     </ul>
   `);
     });
 
-    // GET /lessons – return raw docs (with native _id)
+   
     app.get("/lessons", async function(request, response) {
         try {
-            const allLessons = await collectionForLessons.find({}).toArray();
+            const allLessons = await collectionForLessons.find({})
+            .sort({ location: -1 }) 
+            .toArray();
             response.status(200).send(allLessons);
         } catch (err) {
             console.log("Error retrieving lessons:", err);
@@ -120,50 +123,52 @@ async function run() {
 
     // GET /search - Full text search on LessonName, Location, Price, Space
     app.get("/search", async (req, res) => {
-      const query = (req.query.src || "").trim();
+        try {
+          const query = (req.query.q || "").trim().toLowerCase(); 
+          console.log("Query received:", query);
+          if (!query) {
+            const lessons = await collectionForLessons.find({})
+              .sort({ location: -1 })
+              .toArray();
+              console.log("No query, returning all:", lessons.length);
+            return res.status(200).json(lessons); 
+          }
 
-      try {
-        // Return all lessons if search query is empty
-        if (!query) {
-          const lessons = await collectionForLessons.find({}).toArray();
-          return res.json(lessons);
-        }
+          const numericQuery = !isNaN(query) ? Number(query) : null;
+    const searchConditions = [
+      { name: { $regex: query, $options: "i" } },
+      { location: { $regex: query, $options: "i" } }
+    ];
 
-        const regex = new RegExp(query, "i"); // case-insensitive regex
-
-        const results = await collectionForLessons
-          .find({
-            $or: [
-              { name: regex },
-              { location: regex },
-              {
-                $expr: {
-                  $regexMatch: {
-                    input: { $toString: "$cost" },
-                    regex: query,
-                    options: "i",
-                  },
-                },
-              },
-              {
-                $expr: {
-                  $regexMatch: {
-                    input: { $toString: "$availableinventory" },
-                    regex: query,
-                    options: "i",
-                  },
-                },
-              },
-            ],
-          })
-          .toArray();
-
-        res.json(results);
-      } catch (err) {
-        console.error("Search error:", err);
-        res.status(500).json({ error: "Search failed." });
+    if (numericQuery !== null) {
+        searchConditions.push({ cost: numericQuery });
+        searchConditions.push({ availableinventory: numericQuery });
+      } else {
+        searchConditions.push({
+          $expr: { $regexMatch: { input: { $toString: "$cost" }, regex: query, options: "i" } }
+        });
+        searchConditions.push({
+          $expr: { $regexMatch: { input: { $toString: "$availableinventory" }, regex: query, options: "i" } }
+        });
       }
-    });
+  
+          const lessons = await collectionForLessons.find({
+            $or: searchConditions  [
+              { name: { $regex: query, $options: "i" } }, 
+              { location: { $regex: query, $options: "i" } },
+              { $expr: { $regexMatch: { input: { $toString: "$cost" }, regex: query, options: "i" } } },
+              { $expr: { $regexMatch: { input: { $toString: "$availableinventory" }, regex: query, options: "i" } } }
+            ]
+          })
+          .sort({ location: -1 }) 
+          .toArray();
+  
+          res.status(200).json(lessons); 
+        } catch (err) {
+          console.error("Search error:", err);
+          res.status(500).json({ error: "Search failed" }); 
+        }
+      });
 
     // Start the server
     app.listen(port, () => {
